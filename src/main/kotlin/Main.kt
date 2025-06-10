@@ -66,8 +66,15 @@ fun main() {
 //        }
     }
 
-    createSkiaRenderer(world)
-    world.simulate()
+
+    Thread { world.simulate() }.start()
+
+    val useOpenGL = true
+    if(useOpenGL) {
+        Multithreaded(world, dimension.width, dimension.height).run()
+    } else {
+        createSkiaRenderer(world)
+    }
 }
 
 @OptIn(ExperimentalAtomicApi::class)
