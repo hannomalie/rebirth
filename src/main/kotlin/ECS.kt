@@ -1,14 +1,34 @@
 package org.example
 
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import java.lang.foreign.Arena
+import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.math.max
 import kotlin.reflect.full.isSubclassOf
 
+interface Component {
+    val layout: MemoryLayout
+}
+
+interface Archetype: Component {
+    val includedComponents: Set<Component>
+}
+
+interface System {
+    fun update(deltaSeconds: Float, arena: Arena)
+}
 class World {
     val arena = Arena.ofAuto()
+    val frameChannel = Channel<Frame>()
 
     val entities = mutableMapOf<EntityId, Set<Component>>()
-    val systems = mutableListOf<EntitySystem>()
+    val entitySystems = mutableListOf<EntitySystem>()
+    val systems = mutableListOf<System>()
     val componentsAndArcheTypes = mutableListOf<Component>()
 
     fun add(entityId: EntityId, components: Set<Component>) {
@@ -21,11 +41,11 @@ class World {
         set(entityId, newComponents)
 
         if (newComponents.size == 1)  {
-            val systemOrNull = systems.firstOrNull { it.componentType == components.first() }
+            val systemOrNull = entitySystems.firstOrNull { it.componentType == components.first() }
             systemOrNull ?: throw IllegalStateException("currently unsupported component: $components")
             systemOrNull.add(entityId)
         } else {
-            val systemOrNull = systems.firstOrNull { it.componentType is Archetype && it.componentType.includedComponents == components }
+            val systemOrNull = entitySystems.firstOrNull { it.componentType is Archetype && it.componentType.includedComponents == components }
             systemOrNull ?: throw IllegalStateException("currently unsupported set of components, no archetype for: $components")
             systemOrNull.add(entityId)
         }
@@ -48,11 +68,11 @@ class World {
         // when any of them has a different components already before, please fix me but keep the
         // optimization
         if (entityToComponents.first().second.size == 1)  {
-            val systemOrNull = systems.firstOrNull { it.componentType == components.first() }
+            val systemOrNull = entitySystems.firstOrNull { it.componentType == components.first() }
             systemOrNull ?: throw IllegalStateException("currently unsupported component: $components")
             systemOrNull.addAll(entities)
         } else {
-            val systemOrNull = systems.firstOrNull { it.componentType is Archetype && it.componentType.includedComponents == components }
+            val systemOrNull = entitySystems.firstOrNull { it.componentType is Archetype && it.componentType.includedComponents == components }
             systemOrNull ?: throw IllegalStateException("currently unsupported set of components, no archetype for: $components")
             systemOrNull.addAll(entities)
         }
@@ -63,10 +83,10 @@ class World {
     }
 
     inline fun <reified T: Component> forEachIndexed(crossinline block: context(MemorySegment) (Int, T) -> Unit) {
-        systems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
+        entitySystems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
             system.forEachIndexed(block)
         }
-        systems.filter {
+        entitySystems.filter {
             it.componentType is Archetype && it.componentType.includedComponents.any { it::class.isSubclassOf(T::class) }
         }.forEach { system ->
             val component =
@@ -76,12 +96,64 @@ class World {
             }
         }
     }
+    inline fun <reified T: Component> extractedForEachIndexed(frame: Frame, crossinline block: context(MemorySegment) (Int, T) -> Unit) {
+        entitySystems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
+            system.extractedForEachIndexed(frame, block)
+        }
+        entitySystems.filter {
+            it.componentType is Archetype && it.componentType.includedComponents.any { it::class.isSubclassOf(T::class) }
+        }.forEach { system ->
+            val component =
+                (system.componentType as Archetype).includedComponents.first { it::class.isSubclassOf(T::class) }
+            system.extractedForEachIndexed<T>(frame) { index, archetype ->
+                block(index, component as T)
+            }
+        }
+    }
 
     fun register(vararg component: Component) {
         componentsAndArcheTypes.addAll(component)
         componentsAndArcheTypes.forEach {
-            systems.add(BaseEntitySystem(componentType = it, arena = arena))
+            entitySystems.add(EntitySystem(componentType = it, arena = arena))
         }
+    }
+
+    fun simulate() {
+        runBlocking {
+            var lastNanoTime = java.lang.System.nanoTime()
+
+            var previousFrame: Frame? = null
+            while (true) {
+                previousFrame?.waitForRenderingFinished()
+                previousFrame?.close()
+
+                val frame = Frame()
+
+                val ns = java.lang.System.nanoTime() - lastNanoTime
+                var deltaSeconds = TimeUnit.NANOSECONDS.toSeconds(ns).toFloat()
+                deltaSeconds = max(0.1f, deltaSeconds)
+
+                systems.forEach { system ->
+                    system.update(deltaSeconds, frame.arena)
+                }
+                entitySystems.forEach { system ->
+                    system.update(deltaSeconds, frame.arena)
+
+                    system.extract(frame)
+                }
+                frameChannel.send(frame)
+                previousFrame = frame
+
+                lastNanoTime = java.lang.System.nanoTime()
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalAtomicApi::class)
+private suspend fun Frame.waitForRenderingFinished() {
+    while (!rendered.load()) {
+        delay(1)
     }
 }
 
