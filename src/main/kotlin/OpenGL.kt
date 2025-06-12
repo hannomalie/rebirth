@@ -1,25 +1,45 @@
 package org.example
 
 import kotlinx.coroutines.runBlocking
+import org.lwjgl.BufferUtils
 import org.lwjgl.glfw.GLFW
+import org.lwjgl.glfw.GLFW.*
 import org.lwjgl.glfw.GLFWErrorCallback
 import org.lwjgl.glfw.GLFWFramebufferSizeCallback
 import org.lwjgl.glfw.GLFWKeyCallback
+import org.lwjgl.opengl.ARBShaderStorageBufferObject.GL_SHADER_STORAGE_BUFFER
+import org.lwjgl.opengl.ARBVertexArrayObject.glBindVertexArray
+import org.lwjgl.opengl.ARBVertexArrayObject.glGenVertexArrays
 import org.lwjgl.opengl.GL
 import org.lwjgl.opengl.GL11
+import org.lwjgl.opengl.GL11.GL_FALSE
+import org.lwjgl.opengl.GL11.GL_TRIANGLE_FAN
+import org.lwjgl.opengl.GL20.*
+import org.lwjgl.opengl.GL30.glBindBufferBase
+import org.lwjgl.opengl.GL31.GL_UNIFORM_BUFFER
+import org.lwjgl.opengl.GL31.glDrawArraysInstanced
+import org.lwjgl.opengl.GL44.GL_DYNAMIC_STORAGE_BIT
+import org.lwjgl.opengl.GL45.glCreateBuffers
+import org.lwjgl.opengl.GL45.glNamedBufferStorage
 import org.lwjgl.opengl.GLUtil
 import org.lwjgl.system.Callback
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryUtil
 import java.lang.System
+import java.nio.ByteOrder
 import kotlin.Any
 import kotlin.Boolean
+import kotlin.IllegalStateException
 import kotlin.Int
 import kotlin.Long
+import kotlin.OptIn
 import kotlin.RuntimeException
 import kotlin.also
 import kotlin.check
+import kotlin.collections.first
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.intArrayOf
+import kotlin.reflect.full.isSubclassOf
 import kotlin.synchronized
 import kotlin.use
 
@@ -60,8 +80,10 @@ class Multithreaded(
         check(GLFW.glfwInit()) { "Unable to initialize GLFW" }
 
         GLFW.glfwDefaultWindowHints()
-        GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE)
-        GLFW.glfwWindowHint(GLFW.GLFW_RESIZABLE, GLFW.GLFW_TRUE)
+        glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE)
+        glfwWindowHint(GLFW.GLFW_RESIZABLE, GLFW.GLFW_TRUE)
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 
         window = GLFW.glfwCreateWindow(width, height, "Hello World!", MemoryUtil.NULL, MemoryUtil.NULL)
         if (window == MemoryUtil.NULL) throw RuntimeException("Failed to create the GLFW window")
@@ -84,7 +106,7 @@ class Multithreaded(
         }.also { fsCallback = it })
 
         val vidmode = GLFW.glfwGetVideoMode(GLFW.glfwGetPrimaryMonitor())
-        GLFW.glfwSetWindowPos(window, (vidmode!!.width() - width) / 2, (vidmode.height() - height) / 2)
+//        GLFW.glfwSetWindowPos(window, (vidmode!!.width() - width) / 2, (vidmode.height() - height) / 2)
         MemoryStack.stackPush().use { frame ->
             val framebufferSize = frame.mallocInt(2)
             GLFW.nglfwGetFramebufferSize(
@@ -95,63 +117,163 @@ class Multithreaded(
             width = framebufferSize.get(0)
             height = framebufferSize.get(1)
         }
-        GLFW.glfwShowWindow(window)
+        glfwShowWindow(window)
     }
 
+    enum class DataStrategy {
+        Uniform, UBO, SSBO
+    }
     @OptIn(ExperimentalAtomicApi::class)
     fun renderLoop() = runBlocking {
-        GLFW.glfwMakeContextCurrent(window)
+        glfwMakeContextCurrent(window)
         GL.createCapabilities()
         debugProc = GLUtil.setupDebugMessageCallback()
-        GL11.glClearColor(0.3f, 0.5f, 0.7f, 0.0f)
+        glClearColor(0.3f, 0.5f, 0.7f, 0.0f)
 
         var lastTime = System.nanoTime()
+
+        val vao = glGenVertexArrays()
+        glBindVertexArray(vao)
+        val dataStrategy = DataStrategy.SSBO
+        val vertexShaderSource = """
+            #version 430 core
+            out vec4 vertexColor;
+            
+            layout(location = 0) uniform float positions[10000];
+            struct PositionVelocity {
+                vec2 position;
+                vec2 velocity;
+            };
+            layout (std140, binding = 1) uniform PositionVelocities {
+                PositionVelocity positionVelocities[10000];
+            };
+            layout(binding = 2, std430) readonly buffer _positionVelocitiesSSBO {
+                PositionVelocity positionVelocitiesSSBO[];
+            };
+            
+            void main()
+            {
+                float width = 1280;
+                float height = 1024;
+                ${
+                    when(dataStrategy) {
+                        DataStrategy.UBO -> "vec4 position = vec4(positionVelocities[gl_InstanceID].position, 0, 0);"
+                        DataStrategy.SSBO -> "vec4 position = vec4(positionVelocitiesSSBO[gl_InstanceID].position, 0, 0);"
+                        DataStrategy.Uniform -> "vec4 position = vec4(positions[gl_InstanceID*4], positions[(gl_InstanceID*4)+1], 0, 0);"
+                    }
+                }
+                float pixelSize = 10;
+                float x = ((position.x/width) * 2) - 1;
+                float y = ((position.y/height) * 2) - 1;
+                float entityWidthHalf = pixelSize / width / 2;
+                float entityHeightHalf = pixelSize / height / 2;
+                
+                vec3 aPos;
+                if(gl_VertexID == 0) {
+                    aPos.xy = vec2(x-entityWidthHalf, y-entityHeightHalf);
+                } else if(gl_VertexID == 1) {
+                    aPos.xy = vec2(x+entityWidthHalf, y-entityHeightHalf);
+                } else if(gl_VertexID == 2) {
+                    aPos.xy = vec2(x+entityWidthHalf, y+entityHeightHalf);
+                } else if(gl_VertexID == 3) {
+                    aPos.xy = vec2(x-entityWidthHalf, y+entityHeightHalf);
+                }
+
+//                if(gl_VertexID == 0) {
+//                    aPos.xy = vec2(-0.5, -0.5);
+//                } else if(gl_VertexID == 1) {
+//                    aPos.xy = vec2(0.5, -0.5);
+//                } else if(gl_VertexID == 2) {
+//                    aPos.xy = vec2(0.5, 0.5);
+//                } else if(gl_VertexID == 3) {
+//                    aPos.xy = vec2(-0.5, 0.5);
+//                }
+
+                gl_Position = vec4(aPos, 1.0);
+                vertexColor = vec4(0.5, 0.0, 0.0, 1.0);
+            }
+        """.trimIndent()
+        val fragmentShaderSource = """
+            #version 430 core
+            out vec4 FragColor;
+            in vec4 vertexColor;
+
+            void main()
+            {
+                FragColor = vertexColor;
+            } 
+        """.trimIndent()
+
+        val vertexShader = glCreateShader(GL_VERTEX_SHADER)
+        glShaderSource(vertexShader, vertexShaderSource)
+        glCompileShader(vertexShader)
+
+        val isCompiled = intArrayOf(0)
+        glGetShaderiv(vertexShader, GL_COMPILE_STATUS, isCompiled)
+        if(isCompiled[0] == GL_FALSE) {
+            val infoLog = glGetShaderInfoLog(vertexShader)
+            glDeleteShader(vertexShader)
+            throw IllegalStateException("Cannot compile shader $infoLog")
+        }
+        val fragmentShader = glCreateShader(GL_FRAGMENT_SHADER)
+
+        glShaderSource(fragmentShader, fragmentShaderSource)
+        glCompileShader(fragmentShader)
+
+        glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, isCompiled)
+        if (isCompiled[0] == GL_FALSE)
+        {
+            val infoLog = glGetShaderInfoLog(fragmentShader)
+            glDeleteShader(fragmentShader)
+            glDeleteShader(vertexShader)
+
+            throw IllegalStateException("Cannot compile shader $infoLog")
+        }
+
+        val program = glCreateProgram()
+
+        glAttachShader(program, vertexShader)
+        glAttachShader(program, fragmentShader)
+        glLinkProgram(program)
+        glUseProgram(program)
+
+        val positionVelocitiesBlockIndex = glGenBuffers()
+
+        val ssbo = glCreateBuffers()
+        glNamedBufferStorage(ssbo, BufferUtils.createFloatBuffer(1600000), GL_DYNAMIC_STORAGE_BIT)
+
         while (!destroyed) {
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT)
-            GL11.glViewport(0, 0, width, height)
+            glClear(GL11.GL_COLOR_BUFFER_BIT)
+            glViewport(0, 0, width, height)
 
             val thisTime = System.nanoTime()
             val elapsed = (lastTime - thisTime) / 1E9f
             lastTime = thisTime
 
-            val aspect = width.toFloat() / height
-            GL11.glMatrixMode(GL11.GL_PROJECTION)
-            GL11.glLoadIdentity()
-            GL11.glOrtho((-1.0f * aspect).toDouble(), (+1.0f * aspect).toDouble(), -1.0, +1.0, -1.0, +1.0)
-
-//            GL11.glMatrixMode(GL11.GL_MODELVIEW)
-//            GL11.glRotatef(elapsed * 10.0f, 0f, 0f, 1f)
-//            GL11.glBegin(GL11.GL_QUADS)
-//            GL11.glVertex2f(-0.5f, -0.5f)
-//            GL11.glVertex2f(+0.5f, -0.5f)
-//            GL11.glVertex2f(+0.5f, +0.5f)
-//            GL11.glVertex2f(-0.5f, +0.5f)
-//            GL11.glEnd()
             val frame = world.frameChannel.receive()
 
-            world.extractedForEachIndexed<PositionComponent>(frame) { index, it ->
-//                canvas.drawCircle(it.x, it.y, 2f, paint)
-                val pixelSize = 6
-                val x = ((it.x/width) * 2) - 1
-                val y = ((it.y/height) * 2) - 1
-                val entityWidthHalf = pixelSize.toFloat() / width / 2
-                val entityHeightHalf = pixelSize.toFloat() / height / 2
-                GL11.glBegin(GL11.GL_QUADS)
-                GL11.glVertex2f(x-entityWidthHalf, y-entityHeightHalf)
-                GL11.glVertex2f(x+entityWidthHalf, y-entityHeightHalf)
-                GL11.glVertex2f(x+entityWidthHalf, y+entityHeightHalf)
-                GL11.glVertex2f(x-entityWidthHalf, y+entityHeightHalf)
-
-//                GL11.glVertex2f(-0.5f, -0.5f)
-//                GL11.glVertex2f(+0.5f, -0.5f)
-//                GL11.glVertex2f(+0.5f, +0.5f)
-//                GL11.glVertex2f(-0.5f, +0.5f)
-                GL11.glEnd()
+            val extract = frame.extracts.entries.first { it.key::class.isSubclassOf(PositionVelocity::class) }
+            val extractPositionBuffer = extract.value.asByteBuffer().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+            when (dataStrategy) {
+                DataStrategy.UBO -> {
+                    glBindBuffer(GL_UNIFORM_BUFFER, positionVelocitiesBlockIndex)
+                    glBufferData(GL_UNIFORM_BUFFER, extractPositionBuffer, GL_DYNAMIC_DRAW)
+                    glBindBufferBase(GL_UNIFORM_BUFFER, 1, positionVelocitiesBlockIndex)
+                }
+                DataStrategy.SSBO -> {
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo)
+                    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, extractPositionBuffer)
+                    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssbo)
+                }
+                DataStrategy.Uniform -> {
+                    glUniform1fv(0, extractPositionBuffer)
+                }
             }
+            glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, extractPositionBuffer.capacity()/4)
 
             synchronized(lock) {
                 if (!destroyed) {
-                    GLFW.glfwSwapBuffers(window)
+                    glfwSwapBuffers(window)
                 }
             }
             frame.rendered.compareAndSet(expectedValue = false, newValue = true)
@@ -165,8 +287,8 @@ class Multithreaded(
          */
         Thread { renderLoop() }.start()
 
-        while (!GLFW.glfwWindowShouldClose(window)) {
-            GLFW.glfwWaitEvents()
+        while (!glfwWindowShouldClose(window)) {
+            glfwWaitEvents()
         }
     }
 }

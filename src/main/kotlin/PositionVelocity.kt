@@ -17,7 +17,7 @@ object PositionVelocity: Archetype {
             MemoryLayout.PathElement.groupElement("y")
         )
     }
-    val velocity = object: PositionComponent() {
+    val velocity = object: VelocityComponent() {
         override val xHandle: VarHandle = archetypeLayout.varHandle(
             MemoryLayout.PathElement.groupElement("velocity"),
             MemoryLayout.PathElement.groupElement("x")

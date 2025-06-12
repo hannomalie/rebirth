@@ -24,7 +24,7 @@ fun main() {
     val world = World().apply {
         register(PositionComponent, VelocityComponent, PositionVelocity)
 
-        val maxEntityCount = 2000
+        val maxEntityCount = 20000
         val allEntities = (0 until maxEntityCount).map {
             Entity()
         }
@@ -57,7 +57,6 @@ fun main() {
                     } else if(position.y < 0) {
                         position.y = dimension.height.toFloat()
                     }
-//                        println("""$index: [${position.x} ${position.y}] [${velocity.x} ${velocity.y}] """)
                 }
             }
         })

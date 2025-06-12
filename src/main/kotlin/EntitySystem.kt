@@ -6,8 +6,8 @@ import java.lang.foreign.MemorySegment
 import java.util.BitSet
 
 open class EntitySystem(private val arena: Arena, val componentType: Component) {
-    val _entities = mutableListOf<EntityId>()
-    val entities: List<EntityId> = _entities
+    val _entities = mutableSetOf<EntityId>()
+    val entities: Set<EntityId> = _entities
     val baseLayout = componentType.layout
     var componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
         private set
