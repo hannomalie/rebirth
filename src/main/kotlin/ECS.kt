@@ -6,9 +6,7 @@ import kotlinx.coroutines.runBlocking
 import java.lang.foreign.Arena
 import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
-import java.util.concurrent.TimeUnit
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.math.max
 import kotlin.reflect.full.isSubclassOf
 
 interface Component {
@@ -82,30 +80,30 @@ class World {
         entities.put(entityId, components)
     }
 
-    inline fun <reified T: Component> forEachIndexed(crossinline block: context(MemorySegment) (Int, T) -> Unit) {
+    inline fun <reified T: Component> forEachIndexed(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
         entitySystems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
-            system.forEachIndexed(block)
+            system.forEach(block)
         }
         entitySystems.filter {
             it.componentType is Archetype && it.componentType.includedComponents.any { it::class.isSubclassOf(T::class) }
         }.forEach { system ->
             val component =
                 (system.componentType as Archetype).includedComponents.first { it::class.isSubclassOf(T::class) }
-            system.forEachIndexed<T> { index, archetype ->
-                block(index, component as T)
+            system.forEach<T> { entityId, archetype ->
+                block(entityId, component as T)
             }
         }
     }
     inline fun <reified T: Component> extractedForEachIndexed(frame: Frame, crossinline block: context(MemorySegment) (Int, T) -> Unit) {
         entitySystems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
-            system.extractedForEachIndexed(frame, block)
+            system.extractedForEach(frame, block)
         }
         entitySystems.filter {
             it.componentType is Archetype && it.componentType.includedComponents.any { it::class.isSubclassOf(T::class) }
         }.forEach { system ->
             val component =
                 (system.componentType as Archetype).includedComponents.first { it::class.isSubclassOf(T::class) }
-            system.extractedForEachIndexed<T>(frame) { index, archetype ->
+            system.extractedForEach<T>(frame) { index, archetype ->
                 block(index, component as T)
             }
         }
@@ -118,20 +116,30 @@ class World {
         }
     }
 
+    var inFlightFrames = mutableListOf<Frame>()
+    val toBeExecutedInSimulationThread = Channel<Runnable>(10)
     fun simulate() {
         runBlocking {
-            var lastNanoTime = java.lang.System.nanoTime()
+            var lastTime = java.lang.System.nanoTime()
 
-            var previousFrame: Frame? = null
             while (true) {
-                previousFrame?.waitForRenderingFinished()
-                previousFrame?.close()
+                if(inFlightFrames.size >= 3) {
+                    val previousFrame: Frame? = inFlightFrames.removeFirstOrNull()
+                    previousFrame?.waitForRenderingFinished()
+                    previousFrame?.close()
+                }
+
+                var message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
+                while(message != null) {
+                    message.run()
+                    message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
+                }
 
                 val frame = Frame()
 
-                val ns = java.lang.System.nanoTime() - lastNanoTime
-                var deltaSeconds = TimeUnit.NANOSECONDS.toSeconds(ns).toFloat()
-                deltaSeconds = max(0.1f, deltaSeconds)
+                val thisTime = java.lang.System.nanoTime()
+                val deltaSeconds = (thisTime - lastTime) / 1E9f
+                lastTime = thisTime
 
                 systems.forEach { system ->
                     system.update(deltaSeconds, frame.arena)
@@ -141,10 +149,10 @@ class World {
 
                     system.extract(frame)
                 }
-                frameChannel.send(frame)
-                previousFrame = frame
-
-                lastNanoTime = java.lang.System.nanoTime()
+                if(inFlightFrames.size < 3) {
+                    frameChannel.send(frame)
+                    inFlightFrames.add(frame)
+                }
             }
         }
     }

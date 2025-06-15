@@ -2,7 +2,6 @@ package org.example
 
 import kotlinx.coroutines.runBlocking
 import org.lwjgl.BufferUtils
-import org.lwjgl.glfw.GLFW
 import org.lwjgl.glfw.GLFW.*
 import org.lwjgl.glfw.GLFWErrorCallback
 import org.lwjgl.glfw.GLFWFramebufferSizeCallback
@@ -37,6 +36,8 @@ import kotlin.RuntimeException
 import kotlin.also
 import kotlin.check
 import kotlin.collections.first
+import kotlin.collections.map
+import kotlin.collections.setOf
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.intArrayOf
 import kotlin.reflect.full.isSubclassOf
@@ -64,39 +65,55 @@ class Multithreaded(
 
             synchronized(lock) {
                 destroyed = true
-                GLFW.glfwDestroyWindow(window)
+                glfwDestroyWindow(window)
             }
             if (debugProc != null) debugProc!!.free()
             keyCallback!!.free()
             fsCallback!!.free()
         } finally {
-            GLFW.glfwTerminate()
-            GLFW.glfwSetErrorCallback(null)!!.free()
+            glfwTerminate()
+            glfwSetErrorCallback(null)!!.free()
         }
     }
 
     fun init() {
-        GLFW.glfwSetErrorCallback(GLFWErrorCallback.createPrint(System.err).also { errorCallback = it })
-        check(GLFW.glfwInit()) { "Unable to initialize GLFW" }
+        glfwSetErrorCallback(GLFWErrorCallback.createPrint(System.err).also { errorCallback = it })
+        check(glfwInit()) { "Unable to initialize GLFW" }
 
-        GLFW.glfwDefaultWindowHints()
-        glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE)
-        glfwWindowHint(GLFW.GLFW_RESIZABLE, GLFW.GLFW_TRUE)
+        glfwDefaultWindowHints()
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE)
+        glfwWindowHint(GLFW_DECORATED, GLFW_TRUE)
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 
-        window = GLFW.glfwCreateWindow(width, height, "Hello World!", MemoryUtil.NULL, MemoryUtil.NULL)
+        window = glfwCreateWindow(width, height, "Hello World!", MemoryUtil.NULL, MemoryUtil.NULL)
         if (window == MemoryUtil.NULL) throw RuntimeException("Failed to create the GLFW window")
 
-        GLFW.glfwSetKeyCallback(window, object : GLFWKeyCallback() {
+        glfwSetKeyCallback(window, object : GLFWKeyCallback() {
             override fun invoke(window: Long, key: Int, scancode: Int, action: Int, mods: Int) {
-                if (key == GLFW.GLFW_KEY_ESCAPE && action == GLFW.GLFW_RELEASE) GLFW.glfwSetWindowShouldClose(
+                if (key == GLFW_KEY_ESCAPE && action == GLFW_RELEASE) glfwSetWindowShouldClose(
                     window,
                     true
-                )
+                ) else if(key == GLFW_KEY_A && action == GLFW_RELEASE) {
+                    val allEntities = (0 until 10).map {
+                        Entity()
+                    }
+                    runBlocking {
+                        world.toBeExecutedInSimulationThread.send {
+                            world.addAll(allEntities, setOf(PositionVelocity))
+                            world.forEachIndexed<PositionVelocity> { entityId, component ->
+                                if(allEntities.contains(entityId)) {
+                                    component.position.initRandom()
+                                    component.velocity.initRandom()
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }.also { keyCallback = it })
-        GLFW.glfwSetFramebufferSizeCallback(window, object : GLFWFramebufferSizeCallback() {
+        glfwSetFramebufferSizeCallback(window, object : GLFWFramebufferSizeCallback() {
             override fun invoke(window: Long, w: Int, h: Int) {
                 if (w > 0 && h > 0) {
                     width = w
@@ -105,11 +122,11 @@ class Multithreaded(
             }
         }.also { fsCallback = it })
 
-        val vidmode = GLFW.glfwGetVideoMode(GLFW.glfwGetPrimaryMonitor())
+        val vidmode = glfwGetVideoMode(glfwGetPrimaryMonitor())
 //        GLFW.glfwSetWindowPos(window, (vidmode!!.width() - width) / 2, (vidmode.height() - height) / 2)
         MemoryStack.stackPush().use { frame ->
             val framebufferSize = frame.mallocInt(2)
-            GLFW.nglfwGetFramebufferSize(
+            nglfwGetFramebufferSize(
                 window,
                 MemoryUtil.memAddress(framebufferSize),
                 MemoryUtil.memAddress(framebufferSize) + 4
@@ -179,16 +196,6 @@ class Multithreaded(
                     aPos.xy = vec2(x-entityWidthHalf, y+entityHeightHalf);
                 }
 
-//                if(gl_VertexID == 0) {
-//                    aPos.xy = vec2(-0.5, -0.5);
-//                } else if(gl_VertexID == 1) {
-//                    aPos.xy = vec2(0.5, -0.5);
-//                } else if(gl_VertexID == 2) {
-//                    aPos.xy = vec2(0.5, 0.5);
-//                } else if(gl_VertexID == 3) {
-//                    aPos.xy = vec2(-0.5, 0.5);
-//                }
-
                 gl_Position = vec4(aPos, 1.0);
                 vertexColor = vec4(0.5, 0.0, 0.0, 1.0);
             }
@@ -247,7 +254,8 @@ class Multithreaded(
             glViewport(0, 0, width, height)
 
             val thisTime = System.nanoTime()
-            val elapsed = (lastTime - thisTime) / 1E9f
+            val deltaSeconds = (thisTime - lastTime) / 1E9f
+//            glfwSetWindowTitle(window, deltaSeconds.toString())
             lastTime = thisTime
 
             val frame = world.frameChannel.receive()

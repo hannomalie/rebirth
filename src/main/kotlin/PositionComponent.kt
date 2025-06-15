@@ -12,7 +12,6 @@ open class PositionComponent: Component {
     )
     open val xHandle: VarHandle = layout.varHandle(MemoryLayout.PathElement.groupElement("x"))
     open val yHandle: VarHandle = layout.varHandle(MemoryLayout.PathElement.groupElement("y"))
-
     context(segment: MemorySegment)
     var x: Float
         get() = xHandle.get(segment, 0) as Float

@@ -53,11 +53,11 @@ open class EntitySystem(private val arena: Arena, val componentType: Component) 
 //        }
     }
 
-    inline fun <T> forEachIndexed(crossinline block: context(MemorySegment) (Int, T) -> Unit) {
+    inline fun <T> forEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
         var counter = 0
         components.elements(baseLayout).forEach {
             context(it) {
-                block(counter++, componentType as T)
+                block(entities.elementAt(counter++), componentType as T)
             }
         }
 //        (0 until componentsLayout.elementCount().toInt()).map {
@@ -66,11 +66,11 @@ open class EntitySystem(private val arena: Arena, val componentType: Component) 
 //            }
 //        }
     }
-    inline fun <T> extractedForEachIndexed(frame: Frame, crossinline block: context(MemorySegment) (Int, T) -> Unit) {
+    inline fun <T> extractedForEach(frame: Frame, crossinline block: context(MemorySegment) (Int, T) -> Unit) {
         var counter = 0
         frame.extracts[componentType]!!.elements(baseLayout)!!.forEach {
             context(it) {
-                block(counter++, componentType as T)
+                block(entities.elementAt(counter++), componentType as T)
             }
         }
 //        (0 until componentsLayout.elementCount().toInt()).map {

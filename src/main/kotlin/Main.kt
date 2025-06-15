@@ -20,23 +20,26 @@ import kotlin.random.Random
 
 val dimension = Dimension(1280, 1024)
 @OptIn(ExperimentalAtomicApi::class)
-fun main() {
+fun main() = runBlocking {
     val world = World().apply {
         register(PositionComponent, VelocityComponent, PositionVelocity)
 
-        val maxEntityCount = 20000
-        val allEntities = (0 until maxEntityCount).map {
-            Entity()
-        }
-        addAll(allEntities.take(maxEntityCount/2), setOf(PositionComponent))
-        addAll(allEntities.subList(maxEntityCount/2, allEntities.size), setOf(PositionVelocity))
+        Thread { simulate() }.start()
 
-        forEachIndexed<PositionComponent> { index, position ->
-            position.initRandom()
-        }
-        forEachIndexed<PositionVelocity> { index, archetype ->
-            archetype.velocity.x = (Random.nextFloat()-0.5f) * 10.toFloat()
-            archetype.velocity.y = (Random.nextFloat()-0.5f) * 10.toFloat()
+        toBeExecutedInSimulationThread.send {
+            val maxEntityCount = 200
+            val allEntities = (0 until maxEntityCount).map {
+                Entity()
+            }
+            addAll(allEntities.take(maxEntityCount/2), setOf(PositionComponent))
+            addAll(allEntities.subList(maxEntityCount/2, allEntities.size), setOf(PositionVelocity))
+
+            forEachIndexed<PositionComponent> { index, position ->
+                position.initRandom()
+            }
+            forEachIndexed<PositionVelocity> { index, archetype ->
+                archetype.velocity.initRandom()
+            }
         }
 
         systems.add(object: System {
@@ -64,9 +67,6 @@ fun main() {
 //            println("$index ${archetype.position.print()} ${archetype.velocity.print()} ")
 //        }
     }
-
-
-    Thread { world.simulate() }.start()
 
     val useOpenGL = true
     if(useOpenGL) {
@@ -114,7 +114,7 @@ private fun createSkiaRenderer(world: World) {
 }
 
 context(segment: MemorySegment)
-private fun PositionComponent.initRandom() {
+fun PositionComponent.initRandom() {
     this.x += Random.nextFloat() * dimension.width.toFloat()
     this.y += Random.nextFloat() * dimension.height.toFloat()
     this.x = max(0f, this.x)
@@ -123,3 +123,7 @@ private fun PositionComponent.initRandom() {
     this.y = min(dimension.height.toFloat(), this.y)
 }
 
+context(segment: MemorySegment) fun VelocityComponent.initRandom() {
+    this.x = (Random.nextFloat() - 0.5f) * 10.toFloat()
+    this.y = (Random.nextFloat() - 0.5f) * 10.toFloat()
+}
