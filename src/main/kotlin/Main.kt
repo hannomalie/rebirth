@@ -34,17 +34,17 @@ fun main() = runBlocking {
             addAll(allEntities.take(maxEntityCount/2), setOf(PositionComponent))
             addAll(allEntities.subList(maxEntityCount/2, allEntities.size), setOf(PositionVelocity))
 
-            forEachIndexed<PositionComponent> { index, position ->
+            forEach<PositionComponent> { _, position ->
                 position.initRandom()
             }
-            forEachIndexed<PositionVelocity> { index, archetype ->
+            forEach<PositionVelocity> { _, archetype ->
                 archetype.velocity.initRandom()
             }
         }
 
         systems.add(object: System {
             override fun update(deltaSeconds: Float, arena: Arena) {
-                forEachIndexed<PositionVelocity> { index, component ->
+                forEach<PositionVelocity> { index, component ->
                     val position = component.position
                     val velocity = component.velocity
 

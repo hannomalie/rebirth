@@ -102,12 +102,19 @@ class Multithreaded(
                     runBlocking {
                         world.toBeExecutedInSimulationThread.send {
                             world.addAll(allEntities, setOf(PositionVelocity))
-                            world.forEachIndexed<PositionVelocity> { entityId, component ->
+                            world.forEach<PositionVelocity> { entityId, component ->
                                 if(allEntities.contains(entityId)) {
                                     component.position.initRandom()
                                     component.velocity.initRandom()
                                 }
                             }
+                        }
+                    }
+                } else if(key == GLFW_KEY_D && action == GLFW_RELEASE) {
+                    val allEntities = (0..10).map { world.entities.keys.random() }
+                    runBlocking {
+                        world.toBeExecutedInSimulationThread.send {
+                            world.removeAll(allEntities)
                         }
                     }
                 }

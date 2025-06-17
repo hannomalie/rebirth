@@ -4,18 +4,18 @@ import java.lang.foreign.Arena
 import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
 import java.util.BitSet
+import java.util.TreeSet
 
 open class EntitySystem(private val arena: Arena, val componentType: Component) {
-    val _entities = mutableSetOf<EntityId>()
-    val entities: Set<EntityId> = _entities
+    val _entities = mutableListOf<EntityId>() // TODO: Use set that preserves order
+    val entities: List<EntityId> get() = _entities
     val baseLayout = componentType.layout
     var componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
         private set
     var components = arena.allocate(componentsLayout)
         private set
 
-    context(world: World)
-    open fun add(entityId: EntityId): Boolean {
+    fun add(entityId: EntityId): Boolean {
         return if (!_entities.contains(entityId)) {
             _entities.add(entityId).apply {
                 componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
@@ -27,8 +27,7 @@ open class EntitySystem(private val arena: Arena, val componentType: Component) 
             false
         }
     }
-    context(world: World)
-    open fun addAll(entityIds: List<EntityId>): List<EntityId> = entityIds.filter { entityId ->
+    fun addAll(entityIds: List<EntityId>): List<EntityId> = entityIds.filter { entityId ->
         if (!_entities.contains(entityId)) {
             _entities.add(entityId)
         } else {
@@ -39,6 +38,31 @@ open class EntitySystem(private val arena: Arena, val componentType: Component) 
             componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
             val newComponents = arena.allocate(componentsLayout)
             newComponents.copyFrom(components)
+            components = newComponents
+        }
+    }
+    fun removeAll(entityIds: List<EntityId>) {
+        if(_entities.isEmpty())  return
+
+        var removedSome = false
+        entityIds.forEach { toDelete ->
+            if(_entities.contains(toDelete)) {
+                val toDeleteIndex = _entities.indexOf(toDelete)
+                val isLastElement = toDeleteIndex == _entities.size - 1
+                if (!isLastElement) {
+                    _entities[toDeleteIndex] = _entities.last()
+                    components.asSlice(baseLayout.byteSize() * toDeleteIndex, baseLayout).copyFrom(
+                        components.asSlice(baseLayout.byteSize() * (_entities.size-1), baseLayout)
+                    )
+                }
+                _entities.removeLast()
+                removedSome = true
+            }
+        }
+        if(removedSome) {
+            componentsLayout = componentsLayout.withElementCount(entities.size.toLong())
+            val newComponents = arena.allocate(componentsLayout)
+            newComponents.copyFrom(components.asSlice(0, componentsLayout))
             components = newComponents
         }
     }

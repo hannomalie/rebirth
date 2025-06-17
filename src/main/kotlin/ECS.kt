@@ -76,11 +76,17 @@ class World {
         }
 
     }
+    fun removeAll(entities: List<EntityId>) {
+        entitySystems.forEach {
+            it.removeAll(entities)
+        }
+
+    }
     fun set(entityId: EntityId, components: Set<Component>) {
         entities.put(entityId, components)
     }
 
-    inline fun <reified T: Component> forEachIndexed(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
+    inline fun <reified T: Component> forEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
         entitySystems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
             system.forEach(block)
         }
