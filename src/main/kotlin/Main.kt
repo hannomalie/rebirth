@@ -1,6 +1,9 @@
 package org.example
 
 import kotlinx.coroutines.runBlocking
+import org.apache.logging.log4j.Level
+import org.apache.logging.log4j.LogManager
+import org.apache.logging.log4j.core.config.Configurator
 import org.jetbrains.skia.Canvas
 import org.jetbrains.skia.Color
 import org.jetbrains.skia.Paint
@@ -18,16 +21,20 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
+
 val dimension = Dimension(1280, 1024)
 @OptIn(ExperimentalAtomicApi::class)
 fun main() = runBlocking {
+
+    Configurator.setAllLevels(LogManager.getRootLogger().name, Level.INFO)
+
     val world = World().apply {
         register(PositionComponent, VelocityComponent, PositionVelocity)
 
         Thread { simulate() }.start()
 
         toBeExecutedInSimulationThread.send {
-            val maxEntityCount = 200
+            val maxEntityCount = 12000
             val allEntities = (0 until maxEntityCount).map {
                 Entity()
             }
@@ -48,18 +55,22 @@ fun main() = runBlocking {
                     val position = component.position
                     val velocity = component.velocity
 
-                    position.x += velocity.x * deltaSeconds
-                    position.y += velocity.y * deltaSeconds
-                    if(position.x > dimension.width) {
-                        position.x = 0f
-                    } else if(position.x < 0) {
-                        position.x = dimension.width.toFloat()
+                    var resultingX = position.x + velocity.x * deltaSeconds
+                    var resultingY = position.y + velocity.y * deltaSeconds
+
+                    if(resultingX > dimension.width.toFloat()) {
+                        resultingX = 0f
+                    } else if(resultingX < 0) {
+                        resultingX = dimension.width.toFloat()
                     }
-                    if(position.y > dimension.height) {
-                        position.y = 0f
-                    } else if(position.y < 0) {
-                        position.y = dimension.height.toFloat()
+                    if(resultingY > dimension.height.toFloat()) {
+                        resultingY = 0f
+                    } else if(resultingY < 0) {
+                        resultingY = dimension.height.toFloat()
                     }
+
+                    position.x = resultingX
+                    position.y = resultingY
                 }
             }
         })
@@ -115,12 +126,21 @@ private fun createSkiaRenderer(world: World) {
 
 context(segment: MemorySegment)
 fun PositionComponent.initRandom() {
-    this.x += Random.nextFloat() * dimension.width.toFloat()
-    this.y += Random.nextFloat() * dimension.height.toFloat()
-    this.x = max(0f, this.x)
-    this.y = max(0f, this.y)
-    this.x = min(dimension.width.toFloat(), this.x)
-    this.y = min(dimension.height.toFloat(), this.y)
+    var resultingX = Random.nextFloat() * dimension.width.toFloat()
+    var resultingY = Random.nextFloat() * dimension.height.toFloat()
+
+    if(resultingX < 0f) {
+        resultingX = dimension.width.toFloat()
+    } else if(resultingX > dimension.width.toFloat()) {
+        resultingX = 0f
+    }
+    if(resultingY < 0f) {
+        resultingY = dimension.height.toFloat()
+    } else if(resultingY > dimension.height.toFloat()) {
+        resultingY = 0f
+    }
+    this.x = resultingX
+    this.y = resultingY
 }
 
 context(segment: MemorySegment) fun VelocityComponent.initRandom() {

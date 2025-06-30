@@ -6,14 +6,18 @@ import java.lang.foreign.MemorySegment
 import java.util.BitSet
 import java.util.TreeSet
 
-open class EntitySystem(private val arena: Arena, val componentType: Component) {
+class EntitySystem(private val arena: Arena, val componentType: Component) {
     val _entities = mutableListOf<EntityId>() // TODO: Use set that preserves order
     val entities: List<EntityId> get() = _entities
     val baseLayout = componentType.layout
     var componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
         private set
+    var componentsList: List<MemorySegment> = emptyList()
     var components = arena.allocate(componentsLayout)
-        private set
+        private set(value) {
+            field = value
+            componentsList = components.elements(baseLayout).toList()
+        }
 
     fun add(entityId: EntityId): Boolean {
         return if (!_entities.contains(entityId)) {
@@ -28,12 +32,9 @@ open class EntitySystem(private val arena: Arena, val componentType: Component) 
         }
     }
     fun addAll(entityIds: List<EntityId>): List<EntityId> = entityIds.filter { entityId ->
-        if (!_entities.contains(entityId)) {
-            _entities.add(entityId)
-        } else {
-            false
-        }
+        !_entities.contains(entityId)
     }.apply {
+        _entities.addAll(this)
         if(isNotEmpty()) {
             componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
             val newComponents = arena.allocate(componentsLayout)
@@ -67,7 +68,7 @@ open class EntitySystem(private val arena: Arena, val componentType: Component) 
         }
     }
 
-    open fun update(deltaSeconds: Float, perFrameArena: Arena) { }
+    fun update(deltaSeconds: Float, perFrameArena: Arena) { }
 
     fun extract(frame: Frame) {
         val componentsExtracted = frame.arena.allocate(componentsLayout)
@@ -79,7 +80,8 @@ open class EntitySystem(private val arena: Arena, val componentType: Component) 
 
     inline fun <T> forEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
         var counter = 0
-        components.elements(baseLayout).forEach {
+        //components.elements(baseLayout).forEach {
+        componentsList.forEach {
             context(it) {
                 block(entities.elementAt(counter++), componentType as T)
             }

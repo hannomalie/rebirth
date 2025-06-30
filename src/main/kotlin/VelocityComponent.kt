@@ -26,5 +26,8 @@ open class VelocityComponent : Component {
     context(segment: MemorySegment)
     fun print() = "Velocity [${PositionComponent.x}, ${PositionComponent.y}]"
 
+    override val factory: () -> Component = { VelocityComponent() as Component }
+
+    final override val identifier = 2
     companion object: VelocityComponent()
 }

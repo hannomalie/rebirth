@@ -78,7 +78,7 @@ class EntitySystemTest {
         val arena = Arena.ofAuto()
         val system = EntitySystem(arena, PositionVelocity)
 
-        val entities = (0 until 10000).map { Entity() }
+        val entities = (0 until 1000000).map { Entity() }
         val start = System.nanoTime()
         system.addAll(entities)
         val timeTakenAddNs = System.nanoTime() - start

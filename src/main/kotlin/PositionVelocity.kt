@@ -3,7 +3,7 @@ package org.example
 import java.lang.foreign.MemoryLayout
 import java.lang.invoke.VarHandle
 
-object PositionVelocity: Archetype {
+open class PositionVelocity: Archetype {
     override val layout = MemoryLayout.structLayout(PositionComponent.layout.withName("position"), VelocityComponent.layout.withName("velocity"))
 
     val archetypeLayout = layout
@@ -28,4 +28,9 @@ object PositionVelocity: Archetype {
         )
     }
     override val includedComponents = setOf(position, velocity)
+
+    override val factory: () -> Component = { PositionVelocity() as Component }
+
+    final override val identifier = 1
+    companion object: PositionVelocity()
 }

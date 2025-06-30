@@ -1,6 +1,7 @@
 package org.example
 
 import kotlinx.coroutines.runBlocking
+import org.apache.logging.log4j.LogManager
 import org.lwjgl.BufferUtils
 import org.lwjgl.glfw.GLFW.*
 import org.lwjgl.glfw.GLFWErrorCallback
@@ -44,6 +45,7 @@ import kotlin.reflect.full.isSubclassOf
 import kotlin.synchronized
 import kotlin.use
 
+private val logger = LogManager.getLogger("Rendering")
 class Multithreaded(
     private val world: World,
     var width: Int,
@@ -84,8 +86,8 @@ class Multithreaded(
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)
         glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE)
         glfwWindowHint(GLFW_DECORATED, GLFW_TRUE)
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4)
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3)
 
         window = glfwCreateWindow(width, height, "Hello World!", MemoryUtil.NULL, MemoryUtil.NULL)
         if (window == MemoryUtil.NULL) throw RuntimeException("Failed to create the GLFW window")
@@ -256,12 +258,16 @@ class Multithreaded(
         val ssbo = glCreateBuffers()
         glNamedBufferStorage(ssbo, BufferUtils.createFloatBuffer(1600000), GL_DYNAMIC_STORAGE_BIT)
 
+        glfwSwapInterval(0) // 0 disable vsync, 1 enable vsync
+
         while (!destroyed) {
             glClear(GL11.GL_COLOR_BUFFER_BIT)
             glViewport(0, 0, width, height)
 
             val thisTime = System.nanoTime()
-            val deltaSeconds = (thisTime - lastTime) / 1E9f
+            val deltaNs = thisTime - lastTime
+            val deltaMs = deltaNs / 1E6f
+            val deltaSeconds = deltaNs / 1E9f
 //            glfwSetWindowTitle(window, deltaSeconds.toString())
             lastTime = thisTime
 
@@ -291,6 +297,7 @@ class Multithreaded(
                     glfwSwapBuffers(window)
                 }
             }
+            logger.info("Frame took {} ms \n", deltaMs)
             frame.rendered.compareAndSet(expectedValue = false, newValue = true)
         }
     }

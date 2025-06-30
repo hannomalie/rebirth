@@ -1,6 +1,7 @@
 package org.example
 
 import java.lang.foreign.MemoryLayout
+import java.lang.foreign.MemoryLayout.PathElement.groupElement
 import java.lang.foreign.MemorySegment
 import java.lang.foreign.ValueLayout
 import java.lang.invoke.VarHandle
@@ -10,8 +11,8 @@ open class PositionComponent: Component {
         ValueLayout.JAVA_FLOAT.withName("x"),
         ValueLayout.JAVA_FLOAT.withName("y")
     )
-    open val xHandle: VarHandle = layout.varHandle(MemoryLayout.PathElement.groupElement("x"))
-    open val yHandle: VarHandle = layout.varHandle(MemoryLayout.PathElement.groupElement("y"))
+    open val xHandle: VarHandle = layout.varHandle(groupElement("x"))
+    open val yHandle: VarHandle = layout.varHandle(groupElement("y"))
     context(segment: MemorySegment)
     var x: Float
         get() = xHandle.get(segment, 0) as Float
@@ -25,5 +26,7 @@ open class PositionComponent: Component {
     context(segment: MemorySegment)
     fun print() = "Position [$x, $y]"
 
+    override val factory: () -> Component = { PositionComponent() as Component }
+    final override val identifier = 0
     companion object: PositionComponent()
 }

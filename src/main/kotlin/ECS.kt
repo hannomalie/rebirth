@@ -3,14 +3,22 @@ package org.example
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import org.apache.logging.log4j.LogManager
 import java.lang.foreign.Arena
 import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.reflect.full.companionObject
+import kotlin.reflect.full.companionObjectInstance
 import kotlin.reflect.full.isSubclassOf
 
 interface Component {
     val layout: MemoryLayout
+    val factory: () -> Component
+    val identifier: Int
+    companion object {
+        var identifierCounter = 0
+    }
 }
 
 interface Archetype: Component {
@@ -20,6 +28,7 @@ interface Archetype: Component {
 interface System {
     fun update(deltaSeconds: Float, arena: Arena)
 }
+private val logger = LogManager.getLogger("Update")
 class World {
     val arena = Arena.ofAuto()
     val frameChannel = Channel<Frame>()
@@ -87,28 +96,34 @@ class World {
     }
 
     inline fun <reified T: Component> forEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
-        entitySystems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
+        val clazz = T::class
+        val companionObject = clazz.companionObjectInstance as Component
+        val systemsForComponent = entitySystems.filter { companionObject.identifier == it.componentType.identifier }
+        systemsForComponent.forEach { system ->
             system.forEach(block)
         }
-        entitySystems.filter {
-            it.componentType is Archetype && it.componentType.includedComponents.any { it::class.isSubclassOf(T::class) }
-        }.forEach { system ->
+        val systemsForComponentOfArchetype = entitySystems.filter {
+            it.componentType is Archetype && it.componentType.includedComponents.any { companionObject.identifier == it.identifier }
+        }
+        systemsForComponentOfArchetype.forEach { system ->
             val component =
-                (system.componentType as Archetype).includedComponents.first { it::class.isSubclassOf(T::class) }
+                (system.componentType as Archetype).includedComponents.first { companionObject.identifier == it.identifier } as T
             system.forEach<T> { entityId, archetype ->
-                block(entityId, component as T)
+                block(entityId, component)
             }
         }
     }
     inline fun <reified T: Component> extractedForEachIndexed(frame: Frame, crossinline block: context(MemorySegment) (Int, T) -> Unit) {
-        entitySystems.filter { T::class.isSubclassOf(it.componentType::class) }.forEach { system ->
+        val clazz = T::class
+        val companionObject = clazz.companionObjectInstance as Component
+        entitySystems.filter { companionObject.identifier == it.componentType.identifier }.forEach { system ->
             system.extractedForEach(frame, block)
         }
         entitySystems.filter {
-            it.componentType is Archetype && it.componentType.includedComponents.any { it::class.isSubclassOf(T::class) }
+            it.componentType is Archetype && it.componentType.includedComponents.any { companionObject.identifier == it.identifier }
         }.forEach { system ->
             val component =
-                (system.componentType as Archetype).includedComponents.first { it::class.isSubclassOf(T::class) }
+                (system.componentType as Archetype).includedComponents.first { companionObject.identifier == it.identifier }
             system.extractedForEach<T>(frame) { index, archetype ->
                 block(index, component as T)
             }
@@ -117,55 +132,56 @@ class World {
 
     fun register(vararg component: Component) {
         componentsAndArcheTypes.addAll(component)
-        componentsAndArcheTypes.forEach {
-            entitySystems.add(EntitySystem(componentType = it, arena = arena))
+        componentsAndArcheTypes.forEach { componentType ->
+            entitySystems.add(EntitySystem(arena, componentType))
         }
     }
 
     var inFlightFrames = mutableListOf<Frame>()
     val toBeExecutedInSimulationThread = Channel<Runnable>(10)
-    fun simulate() {
-        runBlocking {
-            var lastTime = java.lang.System.nanoTime()
+    fun simulate() = runBlocking {
+        var lastTime = java.lang.System.nanoTime()
 
-            while (true) {
-                if(inFlightFrames.size >= 3) {
-                    val previousFrame: Frame? = inFlightFrames.removeFirstOrNull()
-                    previousFrame?.waitForRenderingFinished()
-                    previousFrame?.close()
-                }
-
-                var message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
-                while(message != null) {
-                    message.run()
-                    message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
-                }
-
-                val frame = Frame()
-
-                val thisTime = java.lang.System.nanoTime()
-                val deltaSeconds = (thisTime - lastTime) / 1E9f
-                lastTime = thisTime
-
-                systems.forEach { system ->
-                    system.update(deltaSeconds, frame.arena)
-                }
-                entitySystems.forEach { system ->
-                    system.update(deltaSeconds, frame.arena)
-
-                    system.extract(frame)
-                }
-                if(inFlightFrames.size < 3) {
-                    frameChannel.send(frame)
-                    inFlightFrames.add(frame)
-                }
+        while (true) {
+            if(inFlightFrames.size >= 3) {
+                val previousFrame: Frame? = inFlightFrames.removeFirstOrNull()
+                previousFrame?.waitForRenderingFinished()
+                previousFrame?.close()
             }
+
+            var message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
+            while(message != null) {
+                message.run()
+                message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
+            }
+
+            val frame = Frame()
+
+            val thisTime = java.lang.System.nanoTime()
+            val deltaNs = thisTime - lastTime
+            val deltaMs = deltaNs / 1E6f
+            val deltaSeconds = deltaNs / 1E9f
+            lastTime = thisTime
+
+            systems.forEach { system ->
+                system.update(deltaSeconds, frame.arena)
+            }
+            entitySystems.forEach { system ->
+                system.update(deltaSeconds, frame.arena)
+
+                system.extract(frame)
+            }
+            if(inFlightFrames.size < 3) {
+                frameChannel.send(frame)
+                inFlightFrames.add(frame)
+            }
+            logger.info("Update took {} ms \n", deltaMs)
         }
     }
 }
 
 @OptIn(ExperimentalAtomicApi::class)
-private suspend fun Frame.waitForRenderingFinished() {
+private suspend inline fun Frame.waitForRenderingFinished() {
     while (!rendered.load()) {
         delay(1)
     }

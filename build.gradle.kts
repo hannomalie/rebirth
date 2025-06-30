@@ -55,6 +55,10 @@ dependencies {
     runtimeOnly("org.lwjgl", "lwjgl-stb", classifier = lwjglNatives)
     implementation("org.joml", "joml", jomlVersion)
     implementation("org.joml", "joml-primitives", `joml-primitivesVersion`)
+
+    implementation(platform("org.apache.logging.log4j:log4j-bom:2.25.0"))
+    implementation("org.apache.logging.log4j:log4j-api")
+    implementation("org.apache.logging.log4j:log4j-core")
 }
 
 tasks.test {
