@@ -34,7 +34,7 @@ fun main() = runBlocking {
         Thread { simulate() }.start()
 
         toBeExecutedInSimulationThread.send {
-            val maxEntityCount = 12000
+            val maxEntityCount = 120000
             val allEntities = (0 until maxEntityCount).map {
                 Entity()
             }
@@ -51,7 +51,7 @@ fun main() = runBlocking {
 
         systems.add(object: System {
             override fun update(deltaSeconds: Float, arena: Arena) {
-                forEach<PositionVelocity> { index, component ->
+                parallelForEach<PositionVelocity> { index, component ->
                     val position = component.position
                     val velocity = component.velocity
 

@@ -113,6 +113,24 @@ class World {
             }
         }
     }
+    inline fun <reified T: Component> parallelForEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
+        val clazz = T::class
+        val companionObject = clazz.companionObjectInstance as Component
+        val systemsForComponent = entitySystems.filter { companionObject.identifier == it.componentType.identifier }
+        systemsForComponent.forEach { system ->
+            system.parallelForEach(block)
+        }
+        val systemsForComponentOfArchetype = entitySystems.filter {
+            it.componentType is Archetype && it.componentType.includedComponents.any { companionObject.identifier == it.identifier }
+        }
+        systemsForComponentOfArchetype.forEach { system ->
+            val component =
+                (system.componentType as Archetype).includedComponents.first { companionObject.identifier == it.identifier } as T
+            system.parallelForEach<T> { entityId, archetype ->
+                block(entityId, component)
+            }
+        }
+    }
     inline fun <reified T: Component> extractedForEachIndexed(frame: Frame, crossinline block: context(MemorySegment) (Int, T) -> Unit) {
         val clazz = T::class
         val companionObject = clazz.companionObjectInstance as Component
@@ -166,16 +184,17 @@ class World {
             systems.forEach { system ->
                 system.update(deltaSeconds, frame.arena)
             }
+            val deltaNsUpdate = java.lang.System.nanoTime() - thisTime
+            val deltaMsUpdate = deltaNsUpdate / 1E6f
+            logger.info("update took {} ms \n", deltaMsUpdate)
             entitySystems.forEach { system ->
-                system.update(deltaSeconds, frame.arena)
-
                 system.extract(frame)
             }
             if(inFlightFrames.size < 3) {
                 frameChannel.send(frame)
                 inFlightFrames.add(frame)
             }
-            logger.info("Update took {} ms \n", deltaMs)
+            logger.info("Whole cycle took {} ms \n", deltaMs)
         }
     }
 }

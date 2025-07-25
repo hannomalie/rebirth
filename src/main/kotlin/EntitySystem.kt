@@ -3,8 +3,8 @@ package org.example
 import java.lang.foreign.Arena
 import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
-import java.util.BitSet
-import java.util.TreeSet
+import java.util.*
+import java.util.concurrent.CompletableFuture
 
 class EntitySystem(private val arena: Arena, val componentType: Component) {
     val _entities = mutableListOf<EntityId>() // TODO: Use set that preserves order
@@ -18,6 +18,7 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
             field = value
             componentsList = components.elements(baseLayout).toList()
         }
+    val slidingWindows = (0 until 16).map { componentType.factory() }
 
     fun add(entityId: EntityId): Boolean {
         return if (!_entities.contains(entityId)) {
@@ -68,8 +69,6 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
         }
     }
 
-    fun update(deltaSeconds: Float, perFrameArena: Arena) { }
-
     fun extract(frame: Frame) {
         val componentsExtracted = frame.arena.allocate(componentsLayout)
 //        extractionLock.withLock {
@@ -78,6 +77,28 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
 //        }
     }
 
+    inline fun <T> parallelForEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
+        //components.elements(baseLayout).forEach {
+        val chunkSize = componentsList.size / slidingWindows.size
+        val futures = componentsList.chunked(chunkSize).mapIndexed { chunkIndex, chunkElements ->
+            val slidingWindow = slidingWindows[chunkIndex] as T
+            var counter = chunkIndex * chunkSize
+            CompletableFuture.supplyAsync {
+                chunkElements.map { segment ->
+                    context(segment) {
+                        block(entities.elementAt(counter++), slidingWindow)
+                    }
+                }
+            }
+        }
+        CompletableFuture.allOf(*(futures.toTypedArray()))
+            .join()
+//        (0 until componentsLayout.elementCount().toInt()).map {
+//            context(components.asSlice(baseLayout.byteSize() * it, baseLayout)) {
+//                block(it, componentType as T)
+//            }
+//        }
+    }
     inline fun <T> forEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
         var counter = 0
         //components.elements(baseLayout).forEach {
