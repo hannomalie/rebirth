@@ -11,6 +11,9 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.reflect.full.companionObject
 import kotlin.reflect.full.companionObjectInstance
 import kotlin.reflect.full.isSubclassOf
+import kotlin.system.measureNanoTime
+import kotlin.system.measureTimeMillis
+import kotlin.time.measureTimedValue
 
 interface Component {
     val layout: MemoryLayout
@@ -157,44 +160,60 @@ class World {
 
     var inFlightFrames = mutableListOf<Frame>()
     val toBeExecutedInSimulationThread = Channel<Runnable>(10)
+    @OptIn(ExperimentalAtomicApi::class)
     fun simulate() = runBlocking {
         var lastTime = java.lang.System.nanoTime()
 
         while (true) {
-            if(inFlightFrames.size >= 3) {
-                val previousFrame: Frame? = inFlightFrames.removeFirstOrNull()
-                previousFrame?.waitForRenderingFinished()
-                previousFrame?.close()
-            }
+            val wholeCycleTimeMs = measureNanoTime {
+                val waitForRendering = false
+                if(waitForRendering) {
+                    val waitingForRenderingTimeMs = measureNanoTime {
+                        if(inFlightFrames.size >= 3) {
+                            val previousFrame: Frame? = inFlightFrames.removeFirstOrNull()
+                            previousFrame?.waitForRenderingFinished()
+                            previousFrame?.close()
+                        }
+                    } / 1E9f
+                    logger.info("waiting for rendering took {} ms \n", waitingForRenderingTimeMs)
+                }
 
-            var message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
-            while(message != null) {
-                message.run()
-                message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
-            }
+                val processMessagesTimeMs = measureNanoTime {
+                    var message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
+                    while(message != null) {
+                        message.run()
+                        message = toBeExecutedInSimulationThread.tryReceive().getOrNull()
+                    }
+                } / 1E9f
+                logger.info("messages took {} ms \n", processMessagesTimeMs)
 
-            val frame = Frame()
 
-            val thisTime = java.lang.System.nanoTime()
-            val deltaNs = thisTime - lastTime
-            val deltaMs = deltaNs / 1E6f
-            val deltaSeconds = deltaNs / 1E9f
-            lastTime = thisTime
+                val thisTime = java.lang.System.nanoTime()
+                val deltaNs = thisTime - lastTime
+                val deltaSeconds = deltaNs / 1E9f
+                lastTime = thisTime
 
-            systems.forEach { system ->
-                system.update(deltaSeconds, frame.arena)
-            }
-            val deltaNsUpdate = java.lang.System.nanoTime() - thisTime
-            val deltaMsUpdate = deltaNsUpdate / 1E6f
-            logger.info("update took {} ms \n", deltaMsUpdate)
-            entitySystems.forEach { system ->
-                system.extract(frame)
-            }
-            if(inFlightFrames.size < 3) {
-                frameChannel.send(frame)
-                inFlightFrames.add(frame)
-            }
-            logger.info("Whole cycle took {} ms \n", deltaMs)
+                val (frame, frameCreationTimeNs) = measureTimedValue { Frame() }
+                logger.info("frame creation took {} ms \n", frameCreationTimeNs.inWholeMilliseconds)
+//                val frame = Frame()
+                val updateTimeMs = measureNanoTime {
+                    systems.forEach { system ->
+                        system.update(deltaSeconds, frame.arena)
+                    }
+                } / 1E9f
+                logger.info("update took {} ms \n", updateTimeMs)
+                val extractionTimeMs = measureNanoTime {
+                    entitySystems.forEach { system ->
+                        system.extract(frame)
+                    }
+                    if(inFlightFrames.size < 3 || !waitForRendering) {
+                        frameChannel.send(frame)
+                        inFlightFrames.add(frame)
+                    }
+                } / 1E9f
+                logger.info("extraction took {} ms \n", extractionTimeMs)
+            } / 1E9f
+            logger.info("Whole cycle took {} ms \n", wholeCycleTimeMs)
         }
     }
 }

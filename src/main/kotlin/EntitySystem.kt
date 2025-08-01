@@ -1,8 +1,10 @@
 package org.example
 
+import org.lwjgl.BufferUtils
 import java.lang.foreign.Arena
 import java.lang.foreign.MemoryLayout
 import java.lang.foreign.MemorySegment
+import java.nio.ByteBuffer
 import java.util.*
 import java.util.concurrent.CompletableFuture
 
@@ -13,10 +15,12 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
     var componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
         private set
     var componentsList: List<MemorySegment> = emptyList()
+    var componentsByteBuffer: ByteBuffer = BufferUtils.createByteBuffer(1)
     var components = arena.allocate(componentsLayout)
         private set(value) {
             field = value
-            componentsList = components.elements(baseLayout).toList()
+            componentsByteBuffer = value.asByteBuffer()
+            componentsList = field.elements(baseLayout).toList()
         }
     val slidingWindows = (0 until 16).map { componentType.factory() }
 
@@ -74,6 +78,7 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
 //        extractionLock.withLock {
             componentsExtracted.copyFrom(components)
             frame.put(componentType, componentsExtracted)
+            frame.put(componentType, componentsByteBuffer) // TODO: Copy data!
 //        }
     }
 

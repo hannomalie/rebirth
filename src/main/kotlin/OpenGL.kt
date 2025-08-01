@@ -11,9 +11,7 @@ import org.lwjgl.opengl.ARBShaderStorageBufferObject.GL_SHADER_STORAGE_BUFFER
 import org.lwjgl.opengl.ARBVertexArrayObject.glBindVertexArray
 import org.lwjgl.opengl.ARBVertexArrayObject.glGenVertexArrays
 import org.lwjgl.opengl.GL
-import org.lwjgl.opengl.GL11
 import org.lwjgl.opengl.GL11.GL_FALSE
-import org.lwjgl.opengl.GL11.GL_TRIANGLE_FAN
 import org.lwjgl.opengl.GL20.*
 import org.lwjgl.opengl.GL30.glBindBufferBase
 import org.lwjgl.opengl.GL31.GL_UNIFORM_BUFFER
@@ -26,7 +24,6 @@ import org.lwjgl.system.Callback
 import org.lwjgl.system.MemoryStack
 import org.lwjgl.system.MemoryUtil
 import java.lang.System
-import java.nio.ByteOrder
 import kotlin.Any
 import kotlin.Boolean
 import kotlin.IllegalStateException
@@ -43,6 +40,7 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.intArrayOf
 import kotlin.reflect.full.isSubclassOf
 import kotlin.synchronized
+import kotlin.system.measureNanoTime
 import kotlin.use
 
 private val logger = LogManager.getLogger("Rendering")
@@ -260,45 +258,56 @@ class Multithreaded(
 
         glfwSwapInterval(0) // 0 disable vsync, 1 enable vsync
 
+        glViewport(0, 0, width, height)
         while (!destroyed) {
-            glClear(GL11.GL_COLOR_BUFFER_BIT)
-            glViewport(0, 0, width, height)
+            logMs("glClear") {
+                glClear(GL_COLOR_BUFFER_BIT)
+            }
 
             val thisTime = System.nanoTime()
-            val deltaNs = thisTime - lastTime
-            val deltaMs = deltaNs / 1E6f
-            val deltaSeconds = deltaNs / 1E9f
+            val deltaMs = (thisTime - lastTime) / 1E6f
+//            val deltaSeconds = deltaNs / 1E9f
 //            glfwSetWindowTitle(window, deltaSeconds.toString())
             lastTime = thisTime
 
-            val frame = world.frameChannel.receive()
+            val frame = logMs("receive frame") { world.frameChannel.receive() }
 
-            val extract = frame.extracts.entries.first { it.key::class.isSubclassOf(PositionVelocity::class) }
-            val extractPositionBuffer = extract.value.asByteBuffer().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+//            val extract = frame.extracts.entries.first { it.key::class.isSubclassOf(PositionVelocity::class) }
+//            val extractPositionBuffer = extract.value.asByteBuffer().order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer()
+            val extract = logMs("select extract") { frame.extractsByteBuffers.entries.first { it.key::class.isSubclassOf(PositionVelocity::class) } }
             when (dataStrategy) {
                 DataStrategy.UBO -> {
+                    val extractPositionBuffer = extract.value.asFloatBuffer()
                     glBindBuffer(GL_UNIFORM_BUFFER, positionVelocitiesBlockIndex)
                     glBufferData(GL_UNIFORM_BUFFER, extractPositionBuffer, GL_DYNAMIC_DRAW)
                     glBindBufferBase(GL_UNIFORM_BUFFER, 1, positionVelocitiesBlockIndex)
                 }
-                DataStrategy.SSBO -> {
+                DataStrategy.SSBO -> logMs("buffer subdata") {
+                    val extractPositionBuffer = extract.value
                     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo)
                     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, extractPositionBuffer)
                     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssbo)
                 }
                 DataStrategy.Uniform -> {
+                    val extractPositionBuffer = extract.value.asFloatBuffer()
                     glUniform1fv(0, extractPositionBuffer)
                 }
             }
-            glDrawArraysInstanced(GL_TRIANGLE_FAN, 0, 4, extractPositionBuffer.capacity()/4)
+            logMs("glDrawArraysInstanced") {
+                glDrawArraysInstanced(GL_TRIANGLES, 0, 3, extract.value.capacity()/4/4)
+            }
 
-            synchronized(lock) {
-                if (!destroyed) {
-                    glfwSwapBuffers(window)
+            logMs("glfwSwapBuffers") {
+                synchronized(lock) {
+                    if (!destroyed) {
+                        glfwSwapBuffers(window)
+                    }
                 }
             }
             logger.info("Frame took {} ms \n", deltaMs)
-            frame.rendered.compareAndSet(expectedValue = false, newValue = true)
+            logMs("frame set rendered") {
+                frame.rendered.compareAndSet(expectedValue = false, newValue = true)
+            }
         }
     }
 
@@ -313,4 +322,13 @@ class Multithreaded(
             glfwWaitEvents()
         }
     }
+}
+
+private inline fun <T> logMs(label: String, block: () -> T): T {
+    var result: T? = null
+    val timeMs = measureNanoTime {
+        result = block()
+    } / 1E9f
+    logger.info("$label {} ms \n", timeMs)
+    return result!!
 }
