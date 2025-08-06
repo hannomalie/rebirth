@@ -11,14 +11,10 @@ import org.jetbrains.skiko.SkiaLayer
 import org.jetbrains.skiko.SkiaLayerRenderDelegate
 import org.jetbrains.skiko.SkikoRenderDelegate
 import java.awt.Dimension
-import java.lang.foreign.Arena
-import java.lang.foreign.MemorySegment
 import javax.swing.JFrame
 import javax.swing.SwingUtilities
 import javax.swing.WindowConstants
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.math.max
-import kotlin.math.min
 import kotlin.random.Random
 
 
@@ -34,7 +30,7 @@ fun main() = runBlocking {
         Thread { simulate() }.start()
 
         toBeExecutedInSimulationThread.send {
-            val maxEntityCount = 120000
+            val maxEntityCount = 1200000
             val allEntities = (0 until maxEntityCount).map {
                 Entity()
             }

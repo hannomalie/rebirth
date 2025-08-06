@@ -254,7 +254,7 @@ class Multithreaded(
         val positionVelocitiesBlockIndex = glGenBuffers()
 
         val ssbo = glCreateBuffers()
-        glNamedBufferStorage(ssbo, BufferUtils.createFloatBuffer(1600000), GL_DYNAMIC_STORAGE_BIT)
+        glNamedBufferStorage(ssbo, BufferUtils.createFloatBuffer(2600000), GL_DYNAMIC_STORAGE_BIT)
 
         glfwSwapInterval(0) // 0 disable vsync, 1 enable vsync
 
@@ -277,24 +277,25 @@ class Multithreaded(
             val extract = logMs("select extract") { frame.extractsByteBuffers.entries.first { it.key::class.isSubclassOf(PositionVelocity::class) } }
             when (dataStrategy) {
                 DataStrategy.UBO -> {
-                    val extractPositionBuffer = extract.value.asFloatBuffer()
+                    val extractPositionBuffer = extract.value.buffer.asFloatBuffer()
                     glBindBuffer(GL_UNIFORM_BUFFER, positionVelocitiesBlockIndex)
                     glBufferData(GL_UNIFORM_BUFFER, extractPositionBuffer, GL_DYNAMIC_DRAW)
                     glBindBufferBase(GL_UNIFORM_BUFFER, 1, positionVelocitiesBlockIndex)
                 }
                 DataStrategy.SSBO -> logMs("buffer subdata") {
                     val extractPositionBuffer = extract.value
+                    extractPositionBuffer.buffer.rewind()
                     glBindBuffer(GL_SHADER_STORAGE_BUFFER, ssbo)
-                    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, extractPositionBuffer)
+                    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, extractPositionBuffer.buffer)
                     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, ssbo)
                 }
                 DataStrategy.Uniform -> {
-                    val extractPositionBuffer = extract.value.asFloatBuffer()
+                    val extractPositionBuffer = extract.value.buffer.asFloatBuffer()
                     glUniform1fv(0, extractPositionBuffer)
                 }
             }
             logMs("glDrawArraysInstanced") {
-                glDrawArraysInstanced(GL_TRIANGLES, 0, 3, extract.value.capacity()/4/4)
+                glDrawArraysInstanced(GL_TRIANGLES, 0, 3, extract.value.buffer.capacity()/4/4)
             }
 
             logMs("glfwSwapBuffers") {

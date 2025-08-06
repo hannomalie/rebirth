@@ -1,10 +1,5 @@
 package org.example
 
-import org.lwjgl.BufferUtils
-import java.lang.foreign.Arena
-import java.lang.foreign.MemoryLayout
-import java.lang.foreign.MemorySegment
-import java.nio.ByteBuffer
 import java.util.*
 import java.util.concurrent.CompletableFuture
 
@@ -12,24 +7,20 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
     val _entities = mutableListOf<EntityId>() // TODO: Use set that preserves order
     val entities: List<EntityId> get() = _entities
     val baseLayout = componentType.layout
-    var componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
-        private set
-    var componentsList: List<MemorySegment> = emptyList()
-    var componentsByteBuffer: ByteBuffer = BufferUtils.createByteBuffer(1)
-    var components = arena.allocate(componentsLayout)
+    val componentsLayout: Int get() = baseLayout * entities.size
+//    var componentsByteBuffer: ByteBuffer = BufferUtils.createByteBuffer(1)
+    var components = arena.allocate(baseLayout * entities.size)
         private set(value) {
             field = value
-            componentsByteBuffer = value.asByteBuffer()
-            componentsList = field.elements(baseLayout).toList()
+//            componentsByteBuffer = value
         }
     val slidingWindows = (0 until 16).map { componentType.factory() }
 
     fun add(entityId: EntityId): Boolean {
         return if (!_entities.contains(entityId)) {
             _entities.add(entityId).apply {
-                componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
                 val newComponents = arena.allocate(componentsLayout)
-                newComponents.copyFrom(components)
+                newComponents.buffer.put(components.buffer)
                 components = newComponents
             }
         } else {
@@ -41,9 +32,8 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
     }.apply {
         _entities.addAll(this)
         if(isNotEmpty()) {
-            componentsLayout = MemoryLayout.sequenceLayout(entities.size.toLong(), baseLayout)
             val newComponents = arena.allocate(componentsLayout)
-            newComponents.copyFrom(components)
+            newComponents.buffer.put(components.buffer)
             components = newComponents
         }
     }
@@ -57,59 +47,58 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
                 val isLastElement = toDeleteIndex == _entities.size - 1
                 if (!isLastElement) {
                     _entities[toDeleteIndex] = _entities.last()
-                    components.asSlice(baseLayout.byteSize() * toDeleteIndex, baseLayout).copyFrom(
-                        components.asSlice(baseLayout.byteSize() * (_entities.size-1), baseLayout)
-                    )
+                    components.buffer.slice(baseLayout * toDeleteIndex, baseLayout).put(components.buffer.slice(baseLayout * (_entities.size-1), baseLayout))
                 }
                 _entities.removeLast()
                 removedSome = true
             }
         }
         if(removedSome) {
-            componentsLayout = componentsLayout.withElementCount(entities.size.toLong())
             val newComponents = arena.allocate(componentsLayout)
-            newComponents.copyFrom(components.asSlice(0, componentsLayout))
+            newComponents.buffer.put(components.buffer.slice(0, componentsLayout))
             components = newComponents
         }
     }
 
     fun extract(frame: Frame) {
-        val componentsExtracted = frame.arena.allocate(componentsLayout)
+        val componentsExtracted = frame.arena.allocate(components.buffer.capacity())
 //        extractionLock.withLock {
-            componentsExtracted.copyFrom(components)
-            frame.put(componentType, componentsExtracted)
-            frame.put(componentType, componentsByteBuffer) // TODO: Copy data!
+            components.buffer.rewind()
+            componentsExtracted.buffer.put(components.buffer)
+        frame.put(componentType, componentsExtracted)
 //        }
     }
 
     inline fun <T> parallelForEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
         //components.elements(baseLayout).forEach {
-        val chunkSize = componentsList.size / slidingWindows.size
-        val futures = componentsList.chunked(chunkSize).mapIndexed { chunkIndex, chunkElements ->
-            val slidingWindow = slidingWindows[chunkIndex] as T
-            var counter = chunkIndex * chunkSize
+        val entityCountPerSlidingWindow = entities.size / slidingWindows.size
+        val futures = (0 until entities.size).chunked(entityCountPerSlidingWindow).mapIndexed { chunkIndex, chunkElements ->
             CompletableFuture.supplyAsync {
-                chunkElements.map { segment ->
+                val slidingWindow = slidingWindows[chunkIndex] as T
+                var counter = chunkIndex * entityCountPerSlidingWindow
+                val segment = components.copy(position = chunkIndex * entityCountPerSlidingWindow * baseLayout)
+                chunkElements.forEach { chunkElement ->
                     context(segment) {
                         block(entities.elementAt(counter++), slidingWindow)
                     }
+                    segment.position += baseLayout
                 }
             }
         }
         CompletableFuture.allOf(*(futures.toTypedArray()))
             .join()
-//        (0 until componentsLayout.elementCount().toInt()).map {
-//            context(components.asSlice(baseLayout.byteSize() * it, baseLayout)) {
-//                block(it, componentType as T)
-//            }
-//        }
+        (0 until entities.size).map {
+            context(components.copy(position = baseLayout * it)) {
+                block(it, componentType as T)
+            }
+        }
     }
     inline fun <T> forEach(crossinline block: context(MemorySegment) (EntityId, T) -> Unit) {
-        var counter = 0
         //components.elements(baseLayout).forEach {
-        componentsList.forEach {
-            context(it) {
-                block(entities.elementAt(counter++), componentType as T)
+        repeat(entities.size) { counter ->
+            components.position = baseLayout * counter
+            context(components) {
+                block(entities.elementAt(counter), componentType as T)
             }
         }
 //        (0 until componentsLayout.elementCount().toInt()).map {
@@ -120,7 +109,14 @@ class EntitySystem(private val arena: Arena, val componentType: Component) {
     }
     inline fun <T> extractedForEach(frame: Frame, crossinline block: context(MemorySegment) (Int, T) -> Unit) {
         var counter = 0
-        frame.extracts[componentType]!!.elements(baseLayout)!!.forEach {
+//        frame.extracts[componentType]!!.elements(baseLayout)!!.forEach {
+//            context(it) {
+//                block(entities.elementAt(counter++), componentType as T)
+//            }
+//        }
+        while(counter <= entities.size) {
+            val it = frame.extractsByteBuffers[componentType]!!
+            it.position = baseLayout * counter
             context(it) {
                 block(entities.elementAt(counter++), componentType as T)
             }

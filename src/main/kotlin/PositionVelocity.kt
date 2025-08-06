@@ -1,31 +1,21 @@
 package org.example
 
-import java.lang.foreign.MemoryLayout
-import java.lang.invoke.VarHandle
-
 open class PositionVelocity: Archetype {
-    override val layout = MemoryLayout.structLayout(PositionComponent.layout.withName("position"), VelocityComponent.layout.withName("velocity"))
+    override val layout = PositionComponent.layout + VelocityComponent.layout
 
     val archetypeLayout = layout
-    val position = object: PositionComponent() {
-        override val xHandle: VarHandle = archetypeLayout.varHandle(
-            MemoryLayout.PathElement.groupElement("position"),
-            MemoryLayout.PathElement.groupElement("x")
-        )
-        override val yHandle: VarHandle = archetypeLayout.varHandle(
-            MemoryLayout.PathElement.groupElement("position"),
-            MemoryLayout.PathElement.groupElement("y")
-        )
-    }
+    val position = object: PositionComponent() {}
     val velocity = object: VelocityComponent() {
-        override val xHandle: VarHandle = archetypeLayout.varHandle(
-            MemoryLayout.PathElement.groupElement("velocity"),
-            MemoryLayout.PathElement.groupElement("x")
-        )
-        override val yHandle: VarHandle = archetypeLayout.varHandle(
-            MemoryLayout.PathElement.groupElement("velocity"),
-            MemoryLayout.PathElement.groupElement("y")
-        )
+        context(segment: MemorySegment)
+        override var x: Float
+            get() = segment.buffer.getFloat(segment.position + PositionComponent.layout)
+            set(value) { segment.buffer.putFloat(segment.position + PositionComponent.layout, value) }
+
+        context(segment: MemorySegment)
+        override var y: Float
+            get() = segment.buffer.getFloat(segment.position + PositionComponent.layout + Float.SIZE_BYTES)
+            set(value) { segment.buffer.putFloat(segment.position + PositionComponent.layout + Float.SIZE_BYTES, value) }
+
     }
     override val includedComponents = setOf(position, velocity)
 

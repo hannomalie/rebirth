@@ -4,19 +4,17 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.apache.logging.log4j.LogManager
-import java.lang.foreign.Arena
-import java.lang.foreign.MemoryLayout
-import java.lang.foreign.MemorySegment
+import org.lwjgl.BufferUtils
+import java.nio.ByteBuffer
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.reflect.full.companionObject
 import kotlin.reflect.full.companionObjectInstance
-import kotlin.reflect.full.isSubclassOf
 import kotlin.system.measureNanoTime
-import kotlin.system.measureTimeMillis
 import kotlin.time.measureTimedValue
 
+data class MemorySegment(val buffer: ByteBuffer, var position: Int)
+
 interface Component {
-    val layout: MemoryLayout
+    val layout: Int
     val factory: () -> Component
     val identifier: Int
     companion object {
@@ -32,6 +30,16 @@ interface System {
     fun update(deltaSeconds: Float, arena: Arena)
 }
 private val logger = LogManager.getLogger("Update")
+class Arena {
+    fun allocate(componentsLayout: Int): MemorySegment {
+        return MemorySegment(BufferUtils.createByteBuffer(componentsLayout), 0)
+    }
+
+    companion object {
+        fun ofAuto() = Arena()
+        fun ofShared() = Arena()
+    }
+}
 class World {
     val arena = Arena.ofAuto()
     val frameChannel = Channel<Frame>()
@@ -166,7 +174,7 @@ class World {
 
         while (true) {
             val wholeCycleTimeMs = measureNanoTime {
-                val waitForRendering = false
+                val waitForRendering = true
                 if(waitForRendering) {
                     val waitingForRenderingTimeMs = measureNanoTime {
                         if(inFlightFrames.size >= 3) {

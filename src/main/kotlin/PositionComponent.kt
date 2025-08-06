@@ -1,27 +1,17 @@
 package org.example
 
-import java.lang.foreign.MemoryLayout
-import java.lang.foreign.MemoryLayout.PathElement.groupElement
-import java.lang.foreign.MemorySegment
-import java.lang.foreign.ValueLayout
-import java.lang.invoke.VarHandle
 
 open class PositionComponent: Component {
-    override val layout = MemoryLayout.structLayout(
-        ValueLayout.JAVA_FLOAT.withName("x"),
-        ValueLayout.JAVA_FLOAT.withName("y")
-    )
-    open val xHandle: VarHandle = layout.varHandle(groupElement("x"))
-    open val yHandle: VarHandle = layout.varHandle(groupElement("y"))
+    override val layout = Float.SIZE_BYTES * 2
     context(segment: MemorySegment)
     var x: Float
-        get() = xHandle.get(segment, 0) as Float
-        set(value) = xHandle.set(segment, 0, value)
+        get() = segment.buffer.getFloat(segment.position)
+        set(value) { segment.buffer.putFloat(segment.position, value) }
 
     context(segment: MemorySegment)
     var y: Float
-        get() = yHandle.get(segment, 0) as Float
-        set(value) = yHandle.set(segment, 0, value)
+        get() = segment.buffer.getFloat(segment.position + Float.SIZE_BYTES)
+        set(value) { segment.buffer.putFloat(segment.position + Float.SIZE_BYTES, value) }
 
     context(segment: MemorySegment)
     fun print() = "Position [$x, $y]"
