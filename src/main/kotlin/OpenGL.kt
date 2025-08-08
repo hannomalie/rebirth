@@ -254,7 +254,7 @@ class Multithreaded(
         val positionVelocitiesBlockIndex = glGenBuffers()
 
         val ssbo = glCreateBuffers()
-        glNamedBufferStorage(ssbo, BufferUtils.createFloatBuffer(1600000), GL_DYNAMIC_STORAGE_BIT)
+        glNamedBufferStorage(ssbo, BufferUtils.createFloatBuffer(2600000), GL_DYNAMIC_STORAGE_BIT)
 
         glfwSwapInterval(0) // 0 disable vsync, 1 enable vsync
 
